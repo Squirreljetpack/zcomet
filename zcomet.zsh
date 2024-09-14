@@ -302,9 +302,9 @@ _zcomet_is_valid_plugin() {
 #                   The repository and branch/tag/commit
 ############################################################
 _zcomet_clone_repo() {
-  local clone_options
+  local clone_options=(--depth 1)
   if [[ $1 != '--no-submodules' ]]; then
-    clone_options='--recursive'
+    clone_options+=(--recursive)
   else
     shift
   fi
@@ -319,7 +319,7 @@ _zcomet_clone_repo() {
   [[ -d $repo_dir ]] && return
 
   print -P "%B%F{yellow}Cloning ${repo}:%f%b"
-  if ! command git clone ${clone_options} "https://${ZCOMET[GITSERVER]}/${repo}" "$repo_dir"; then
+  if ! command git clone $clone_options[@] "https://${ZCOMET[GITSERVER]}/${repo}" "$repo_dir"; then
     ret=$?
     >&2 print "Could not clone repository ${repo}."
     return $ret
@@ -679,7 +679,6 @@ zcomet() {
 
           local -a compinit_opts
           zstyle -a ':zcomet:compinit' arguments compinit_opts
-          compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
 
           # Run compdef calls that were deferred earlier
           local def
@@ -687,6 +686,7 @@ zcomet() {
             [[ -n $def ]] && compdef ${=def}
           done
           (( ${+ZCOMET_COMPDEFS} )) && unset ZCOMET_COMPDEFS
+          compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
 
           # Compile the dumpfile
           ( _zcomet_compile "$_comp_dumpfile" ) &!
