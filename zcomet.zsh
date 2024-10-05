@@ -20,7 +20,7 @@ fi
 # Add zcomet functions to FPATH and autoload some things
 fpath=( "${ZCOMET[SCRIPT]:A:h}/functions" "${fpath[@]}" )
 autoload -Uz add-zsh-hook \
-             zcomet_{unload,update,list,self-update,help}
+             zcomet_{unload,update,list,self-update,help,refresh}
 
 # Global Parameter holding the plugin-manager’s capabilities
 # https://github.com/agkozak/Zsh-100-Commits-Club/blob/master/Zsh-Plugin-Standard.adoc#9-global-parameter-holding-the-plugin-managers-capabilities
@@ -154,11 +154,11 @@ _zcomet_load() {
 
   if [[ -n $1 ]]; then
     if [[ -f ${base_path}/$1 ]]; then
-      files=( "$@" )
+      files=( $@ )
       set --
     elif [[ -d ${base_path}/$1 ]]; then
       subdir=$1 && shift
-      (( $# )) && files=( "$@" )
+      (( $# )) && files=( $@ )
       set --
     else
       >&2 print "zcomet: ${repo}: invalid arguments." && return 1
@@ -258,6 +258,7 @@ _zcomet_load() {
 #   ZCOMET_FPATH
 #   ZCOMET_SNIPPETS
 #   ZCOMET_TRIGGERS
+#   ZCOMET_CACHE
 # Arguments:
 #   $1 The command being run (load/snippet/trigger)
 #   $2 Repository and optional subpackage, e.g.,
@@ -275,6 +276,8 @@ _zcomet_add_list() {
     ZCOMET_SNIPPETS=( "${ZCOMET_SNIPPETS[@]}" "$2" )
   elif [[ $1 == 'trigger' ]]; then
     ZCOMET_TRIGGERS=( "${ZCOMET_TRIGGERS[@]}" "$2" )
+  elif [[ $1 == 'cache' ]]; then
+    ZCOMET_CACHE=( "${ZCOMET_CACHE[@]}" "$2" )
   fi
 }
 
@@ -377,7 +380,7 @@ _zcomet_load_command() {
       _zcomet_compile "$file"
     done
   fi
-  _zcomet_load "${repo_branch%@*}" "$@"
+  _zcomet_load "${repo_branch%@*}" $@
 }
 
 ############################################################
@@ -519,6 +522,65 @@ _zcomet_snippet_command() {
   fi
 }
 
+_zcomet_eval() {
+  [[ -z $1 ]] && print 'You need to specify a command.' && return 1
+
+  local eval_cmd eval_file eval_base
+
+  eval_cmd=$1 && shift
+  ! [ -d ${ZCOMET[CACHE_DIR]} ] && mkdir -p ${ZCOMET[CACHE_DIR]}
+  eval_base=${ZCOMET[CACHE_DIR]}/${ZCOMET[EVAL_FILE]}
+
+  # source or create
+  eval_file=($eval_base.*([1]N))
+  if [[ -z "$eval_file" ]]; then
+    eval_file=$eval_base
+    eval $eval_cmd >$eval_file
+  fi
+  source $eval_file
+  ZCOMET[EVAL_FILE]+="_"
+
+  (
+    # compute criterion
+    if [[ -n $1 ]]; then
+      new_suffix=$(eval $1)
+    else
+      cat_params=${eval_cmd##cat }
+      if [[ $eval_cmd != $cat_params ]]; then
+        new_suffix=$(stat -c '%Y' ${=~cat_params} | sort -nr | head -n 1) # update by mtime by default for cat
+      else
+        new_suffix=$(cksum $eval_file | cut -d' ' -f1) # numeric hash of file
+      fi
+    fi
+
+    # update
+    suffix="${eval_file##*.}"
+    [[ $suffix == $new_suffix ]] && return 0
+    if [[ $suffix == $eval_file ]]; then
+      mv $eval_file $eval_base.$new_suffix
+    else
+      eval $eval_cmd >$eval_base.$new_suffix && rm -f $eval_file
+    fi
+    zcompile $eval_base.$new_suffix
+  )&!
+
+  _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
+}
+
+_zcomet_refresh() {
+  rm -rf ${ZCOMET[CACHE_DIR]}
+
+  local dump_file
+  zstyle -s ':zcomet:compinit' dump-file dump_file
+  if [[ -n $dump_file ]]; then
+    rm -f $dump_file
+  else
+    rm -f "${ZDOTDIR:-${HOME}}/.zcompdump_${EUID}_${OSTYPE}_${ZSH_VERSION}"
+  fi
+  
+  # would like to allow for updating completions in fpath/hash tables and other cache files in the future
+}
+
 ############################################################
 # The `trigger' command - lazy-loading plugins
 #
@@ -559,7 +621,7 @@ _zcomet_trigger_command() {
   # Don't clone local plugins
   # TODO: Check to make sure local plugins exist?
   if [[ $1 != /* ]]; then
-    _zcomet_clone_repo ${clone_options} "$@"
+    _zcomet_clone_repo ${clone_options} $@
   fi
 
   for trigger in "${triggers[@]}"; do
@@ -593,6 +655,7 @@ _zcomet_trigger_command() {
 #   ZCOMET_SNIPPETS
 #   ZCOMET_TRIGGERS
 #   ZCOMET_NAMED_DIRS
+#   ZCOMET_CACHE
 # Arguments:
 #   load <repo> [...]
 #   fpath <repo> [...]
@@ -608,7 +671,7 @@ _zcomet_trigger_command() {
 #   Status updates
 ############################################################
 zcomet() {
-  typeset -gUa zsh_loaded_plugins ZCOMET_FPATH ZCOMET_SNIPPETS ZCOMET_TRIGGERS
+  typeset -gUa zsh_loaded_plugins ZCOMET_FPATH ZCOMET_SNIPPETS ZCOMET_TRIGGERS ZCOMET_CACHE
   typeset -gUA ZCOMET_PLUGINS
 
   typeset -g REPLY
@@ -635,6 +698,14 @@ zcomet() {
     : ${ZCOMET[SNIPPETS_DIR]:=${ZCOMET[HOME_DIR]}/snippets}
   fi
 
+  if zstyle -s :zcomet: cache-dir cache_dir; then
+    ZCOMET[CACHE_DIR]=$cache_dir
+  else
+    : ${ZCOMET[CACHE_DIR]:=${ZCOMET[HOME_DIR]}/cache}
+  fi
+  # represents paths relative to CACHE_DIR
+  : ${ZCOMET[EVAL_FILE]:=eval}
+
   if zstyle -s :zcomet: gitserver git_server; then
     ZCOMET[GITSERVER]=$gitserver
   else
@@ -659,9 +730,9 @@ zcomet() {
 
   case $cmd in
     load|fpath|snippet|trigger)
-      _zcomet_${cmd}_command "$@"
+      _zcomet_${cmd}_command $@
       ;;
-    unload|update|list|self-update) zcomet_$cmd "$@" ;;
+    unload|update|list|self-update) zcomet_$cmd $@ ;;
     compinit)
       autoload -Uz compinit
 
@@ -679,6 +750,7 @@ zcomet() {
 
           local -a compinit_opts
           zstyle -a ':zcomet:compinit' arguments compinit_opts
+          compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
 
           # Run compdef calls that were deferred earlier
           local def
@@ -686,7 +758,6 @@ zcomet() {
             [[ -n $def ]] && compdef ${=def}
           done
           (( ${+ZCOMET_COMPDEFS} )) && unset ZCOMET_COMPDEFS
-          compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
 
           # Compile the dumpfile
           ( _zcomet_compile "$_comp_dumpfile" ) &!
@@ -698,9 +769,15 @@ zcomet() {
         >&2 print 'Which script(s) would you like to zcompile?'
         return 1
       fi
-      _zcomet_compile "$@"
+      _zcomet_compile $@
       ;;
-    -h|--help|help) zcomet_help "$@" ;;
+    eval)
+      _zcomet_eval $@
+      ;;
+    refresh)
+      _zcomet_refresh $@
+      ;;
+    -h|--help|help) zcomet_help $@ ;;
     *)
       zcomet_help
       return 1

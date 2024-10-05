@@ -44,6 +44,12 @@ fi
 	print -n '  '
 	print -z -f '%s, ' "${(o)ZCOMET_TRIGGERS[@]}"
 	read -z && print "${REPLY%,}" | fold -s -w $COLUMNS
+(( ${#ZCOMET_CACHE} )) &&
+  success=1 &&
+  print -P '%B%F{yellow}Cached:%f%b' &&
+	print -n '  '
+	print -z -f '%s, ' "${(o)ZCOMET_CACHE[@]}"
+	read -z && print "${REPLY%,}" | fold -s -w $COLUMNS
 
 (( success )) && return 0 || return 1
 
