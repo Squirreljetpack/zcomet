@@ -568,16 +568,8 @@ _zcomet_eval() {
 }
 
 _zcomet_refresh() {
-  rm -rf ${ZCOMET[CACHE_DIR]}
-
-  local dump_file
-  zstyle -s ':zcomet:compinit' dump-file dump_file
-  if [[ -n $dump_file ]]; then
-    rm -f $dump_file
-  else
-    rm -f "${ZDOTDIR:-${HOME}}/.zcompdump_${EUID}_${OSTYPE}_${ZSH_VERSION}"
-  fi
-  
+  [[ ${ZCOMET[CACHE_DIR]} ]] && rm -rf ${ZCOMET[CACHE_DIR]}
+  [[ -f $_comp_dumpfile ]] && rm -f $_comp_dumpfile
   # would like to allow for updating completions in fpath/hash tables and other cache files in the future
 }
 
@@ -750,9 +742,10 @@ zcomet() {
 
           local -a compinit_opts
           zstyle -a ':zcomet:compinit' arguments compinit_opts
-          compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
+          compinit -d "$_comp_dumpfile" ${compinit_opts[@]} # compinit is called after fpath is fully populated. Note that the dumpfile only shows fpath #compdef (files), as compdump isn't called later. To update such files, use zcomet refresh.
+          # The other option is compinit -DCd, and then check fpath directory mtimes for modifications to trigger replay + asynchronous second compinit -d call. This however necessitates calling zcomet refresh for manual compdefs as well.
 
-          # Run compdef calls that were deferred earlier
+          # Replay compdef calls that were deferred earlier
           local def
           for def in "${ZCOMET_COMPDEFS[@]}"; do
             [[ -n $def ]] && compdef ${=def}
