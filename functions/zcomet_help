@@ -16,6 +16,8 @@ self-update     update zcomet itself
 snippet         load a snippet of code
 trigger         create a shortcut for loading and running a plugin
 unload          unload a plugin
-update          update all plugins and snippets" | fold -s -w $COLUMNS
+update          update all plugins and snippets
+eval            run and optimize the output of the command for future invokations'
+refresh         refresh the compinit and eval caches" | fold -s -w $COLUMNS
 
 # vim: ft=zsh
