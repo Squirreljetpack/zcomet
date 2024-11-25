@@ -13,6 +13,8 @@ commands=(
 	'help:print this help text'
 	'fpath:clone a repository and add one of its directories to FPATH'
 	'compinit:run compinit and compile its cache'
+	'eval:run and optimize the output of the command for future invokations'
+	'refresh: refresh the compinit and eval caches'
 )
 
 if (( CURRENT == 2 )); then
