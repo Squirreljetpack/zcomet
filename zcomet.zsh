@@ -729,6 +729,7 @@ zcomet() {
       autoload -Uz compinit
 
       if [[ $TERM != 'dumb' ]]; then 
+        check_interval=$1
         () {
           setopt LOCAL_OPTIONS EQUALS EXTENDED_GLOB
 
@@ -740,10 +741,20 @@ zcomet() {
             typeset -g _comp_dumpfile="${ZDOTDIR:-${HOME}}/.zcompdump_${EUID}_${OSTYPE}_${ZSH_VERSION}"
           fi
 
+
           local -a compinit_opts
           zstyle -a ':zcomet:compinit' arguments compinit_opts
-          compinit -d "$_comp_dumpfile" ${compinit_opts[@]} # compinit is called after fpath is fully populated. Note that the dumpfile only shows fpath #compdef (files), as compdump isn't called later. To update such files, use zcomet refresh.
-          # The other option is compinit -DCd, and then check fpath directory mtimes for modifications to trigger replay + asynchronous second compinit -d call. This however necessitates calling zcomet refresh for manual compdefs as well.
+
+          if [[ -z $check_interval ]]; then
+            compinit -d "$_comp_dumpfile" ${compinit_opts[@]} # compinit is called after fpath is fully populated. Note that the dumpfile only shows fpath #compdef (files), as compdump isn't called later. To update such files, use zcomet refresh.
+          else
+            # The other option is compinit -D -C -d, and then check fpath directory mtimes for modifications to trigger replay + asynchronous second compinit -d call. This however necessitates calling zcomet refresh for manual compdefs as well. A good balance is to set compinit_opts based on [[ -n $_comp_dumpfile(#qN.mh+24) ]] to only check if dumpfile needs regenerating once a day
+            if [[ -n $_comp_dumpfile(#qN.mh+$check_interval) ]]; then
+              compinit -d "$_comp_dumpfile" ${compinit_opts[@]}
+            else
+              compinit -d -C "$_comp_dumpfile" ${compinit_opts[@]}
+            fi
+          fi
 
           # Replay compdef calls that were deferred earlier
           local def

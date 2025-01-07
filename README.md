@@ -102,8 +102,9 @@ Those lines will clone repos, source scripts, update your `FPATH` and `PATH`, an
 
 ```sh
 # Clone zcomet if necessary
-if [[ ! -f ${ZDOTDIR:-${HOME}}/.zcomet/bin/zcomet.zsh ]]; then
+if [[ ! -f ${ZDOTDIR:-${HOME}}/.zcomet/bin/zcomet.zsh.zwc ]]; then
   command git clone https://github.com/agkozak/zcomet.git ${ZDOTDIR:-${HOME}}/.zcomet/bin
+  
 fi
 
 source ${ZDOTDIR:-${HOME}}/.zcomet/bin/zcomet.zsh
@@ -253,6 +254,8 @@ If you need to specify other options to `compinit`, you can do it this way:
 
 But it is safest to stick to the default behavior. An incorrectly configured `compinit` can lead to your completions being broken or unsafe code being loaded.
 
+If this step takes too long, you can specify a check_interval parameter as follows `zcomet compinit 24`, which will cause compinit to limit its validity check to only once a day. Run `zcomet refresh` to force recompilation.
+
 ### `compile`
 
 Compiles a script or scripts if there is no corresponding wordcode (`.zwc`) file or if a script is newer than its `.zwc`. Note that `zcomet` always compiles scripts after cloning repositories or running `update`, so you should generally never need to invoke `zcomet compile` yourself.
@@ -268,6 +271,14 @@ Updates `zcomet` itself. Note that `zcomet` must have been installed as a cloned
 ### `unload` \[repository-name\]
 
 Unloads a plugin that has an [unload function](https://github.com/agkozak/Zsh-100-Commits-Club/blob/master/Zsh-Plugin-Standard.adoc#4-unload-function). The implementation is still very basic.
+
+### `eval` \[repository-name\]
+
+Caches the output of the command provided to it, and executes it. Use `zcomet refresh` to refresh the cache.
+
+### `refresh` \[repository-name\]
+
+Regenerates compinit and eval cache.
 
 ## Options
 
