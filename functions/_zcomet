@@ -12,7 +12,7 @@ commands=(
 	'self-update:update zcomet itself'
 	'help:print this help text'
 	'fpath:clone a repository and add one of its directories to FPATH'
-	'compinit:run compinit and compile its cache'
+	'compinit:run compinit and compile its cache. Optionally, specify compdump checking interval in hours.'
 	'eval:run and optimize the output of the command for future invokations'
 	'refresh: refresh the compinit and eval caches'
 )
