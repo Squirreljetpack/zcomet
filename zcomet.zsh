@@ -540,28 +540,30 @@ _zcomet_eval() {
   source $eval_file
   ZCOMET[EVAL_FILE]+="_"
 
+
   (
-    # compute criterion
+    mtime=$(zstat +mtime $eval_file)
+    (( EPOCHSECONDS - mtime > 10 )) || exit
+    touch $eval_file
+    
+    # compute "hash"
     if [[ -n $1 ]]; then
-      new_suffix=$(eval $1)
+      new_suffix=$(eval $1) # custom suffix
     else
-      cat_params=${eval_cmd##cat }
-      if [[ $eval_cmd != $cat_params ]]; then
-        new_suffix=$(stat -c '%Y' ${=~cat_params} | sort -nr | head -n 1) # update by mtime by default for cat
+      cat_files=${eval_cmd##cat }
+      if [[ $eval_cmd != $cat_files ]]; then
+        new_suffix=$(zstat +mtime ${=~cat_files} | cut -d' ' -f 2 | sort -nr | head -n 1) # update by mtime by default for cat
       else
         new_suffix=$(cksum $eval_file | cut -d' ' -f1) # numeric hash of file
       fi
     fi
 
-    # update
+    # update if hash differs
     suffix="${eval_file##*.}"
-    [[ $suffix == $new_suffix ]] && return 0
-    if [[ $suffix == $eval_file ]]; then
-      mv $eval_file $eval_base.$new_suffix
-    else
-      eval $eval_cmd >$eval_base.$new_suffix && rm -f $eval_file
+    if [[ $suffix != $new_suffix ]]; then
+      eval $eval_cmd >$eval_base.$new_suffix && rm -f $eval_file $eval_file.zwc
+      zcompile $eval_base.$new_suffix
     fi
-    zcompile $eval_base.$new_suffix
   )&!
 
   _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
@@ -570,6 +572,7 @@ _zcomet_eval() {
 _zcomet_refresh() {
   [[ ${ZCOMET[CACHE_DIR]} ]] && rm -rf ${ZCOMET[CACHE_DIR]}
   [[ -f $_comp_dumpfile ]] && rm -f $_comp_dumpfile
+  exec zsh
   # would like to allow for updating completions in fpath/hash tables and other cache files in the future
 }
 
