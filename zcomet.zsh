@@ -534,18 +534,19 @@ _zcomet_eval() {
   # source or create
   eval_file=($eval_base.*([1]N))
   if [[ -z "$eval_file" ]]; then
+    if ! [ -e $eval_base ]; then
+      touch $eval_base
+      eval $eval_cmd >$eval_base
+    fi
     eval_file=$eval_base
-    eval $eval_cmd >$eval_file
   fi
+
   source $eval_file
   ZCOMET[EVAL_FILE]+="_"
 
-
+  mtime=$(zstat +mtime $eval_file)
+  (( EPOCHSECONDS - mtime > 10 )) && touch $eval_file && 
   (
-    mtime=$(zstat +mtime $eval_file)
-    (( EPOCHSECONDS - mtime > 10 )) || exit
-    touch $eval_file
-    
     # compute "hash"
     if [[ -n $1 ]]; then
       new_suffix=$(eval $1) # custom suffix
@@ -565,6 +566,7 @@ _zcomet_eval() {
       zcompile $eval_base.$new_suffix
     fi
   )&!
+  
 
   _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
 }
