@@ -525,48 +525,58 @@ _zcomet_snippet_command() {
 _zcomet_eval() {
   [[ -z $1 ]] && print 'You need to specify a command.' && return 1
 
-  local eval_cmd eval_file eval_base
+  local eval_cmd eval_file _eval_base eval_base eval_lock i
 
   eval_cmd=$1 && shift
   ! [ -d ${ZCOMET[CACHE_DIR]} ] && mkdir -p ${ZCOMET[CACHE_DIR]}
-  eval_base=${ZCOMET[CACHE_DIR]}/${ZCOMET[EVAL_FILE]}
-
-  # source or create
-  eval_file=($eval_base.*([1]N))
-  if [[ -z "$eval_file" ]]; then
-    if ! [ -e $eval_base ]; then
-      touch $eval_base
-      eval $eval_cmd >$eval_base
-    fi
-    eval_file=$eval_base
-  fi
-
-  source $eval_file
+  _eval_base=${ZCOMET[CACHE_DIR]}/${ZCOMET[EVAL_FILE]}
+  eval_base=$_eval_base.
   ZCOMET[EVAL_FILE]+="_"
 
-  mtime=$(zstat +mtime $eval_file)
-  (( EPOCHSECONDS - mtime > 10 )) && touch $eval_file && 
-  (
-    # compute "hash"
-    if [[ -n $1 ]]; then
-      new_suffix=$(eval $1) # custom suffix
-    else
-      cat_files=${eval_cmd##cat }
-      if [[ $eval_cmd != $cat_files ]]; then
-        new_suffix=$(zstat +mtime ${=~cat_files} | cut -d' ' -f 2 | sort -nr | head -n 1) # update by mtime by default for cat
-      else
-        new_suffix=$(cksum $eval_file | cut -d' ' -f1) # numeric hash of file
-      fi
-    fi
+  eval_file=($eval_base*([1]N))
+  if [[ -z "$eval_file" ]]; then
+    if [ -e "$_eval_base" ]; then
+      # wait up to 1 sec to finish eval
+      for ((i=1; i<=100; i++)); do
+        [[ -e $eval_base ]] &&
+        source $eval_base &&
+        _zcomet_add_list "cache" "$eval_cmd" &&
+        return
 
-    # update if hash differs
-    suffix="${eval_file##*.}"
-    if [[ $suffix != $new_suffix ]]; then
-      eval $eval_cmd >$eval_base.$new_suffix && rm -f $eval_file $eval_file.zwc
-      zcompile $eval_base.$new_suffix
+        sleep 0.01
+      done
     fi
-  )&!
+    eval $eval_cmd >$_eval_base
+    mv $_eval_base $eval_base
+    eval_file=$eval_base
+  fi
+  source $eval_file 
   
+  if mkdir "${_eval_base}lock" 2>/dev/null; then    
+    (
+      # compute "hash"
+      if [[ -n $1 ]]; then
+        new_suffix=$(eval $1) # custom suffix
+      else
+        cat_files=${eval_cmd##cat }
+        if [[ $eval_cmd != $cat_files ]]; then
+          new_suffix=$(zstat +mtime ${=~cat_files} | cut -d' ' -f 2 | sort -nr | head -n 1) # update by mtime by default for cat
+        else
+          new_suffix=$(cksum $eval_file | cut -d' ' -f1) # numeric hash of full command
+        fi
+      fi
+
+      # update if hash differs
+      suffix="${eval_file##*.}"
+      if [[ $suffix != $new_suffix ]]; then
+          rm -f $eval_base* # we don't need to worry about files that are still reading due to inodes
+          eval $eval_cmd >$_eval_base
+          mv $_eval_base $eval_base$new_suffix
+          zcompile $eval_base$new_suffix
+      fi
+      rmdir ${_eval_base}lock
+    )&>/dev/null &! 
+  fi
 
   _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
 }
@@ -701,7 +711,7 @@ zcomet() {
     : ${ZCOMET[CACHE_DIR]:=${ZCOMET[HOME_DIR]}/cache}
   fi
   # represents paths relative to CACHE_DIR
-  : ${ZCOMET[EVAL_FILE]:=eval}
+  : ${ZCOMET[EVAL_FILE]:=eval_}
 
   if zstyle -s :zcomet: gitserver git_server; then
     ZCOMET[GITSERVER]=$gitserver
