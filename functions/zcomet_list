@@ -38,17 +38,15 @@ fi
   success=1 &&
   print -P '%B%F{yellow}Snippets:%f%b' &&
   print -l -f '  %s\n' "${(o)ZCOMET_SNIPPETS[@]}"
+(( ${#ZCOMET_CACHE} )) &&
+  success=1 &&
+  print -P '%B%F{yellow}Cached:%f%b' &&
+	print -l -f '  %s\n' "${(o)ZCOMET_CACHE[@]}"
 (( ${#ZCOMET_TRIGGERS} )) &&
   success=1 &&
   print -P '%B%F{yellow}Triggers:%f%b' &&
 	print -n '  '
 	print -z -f '%s, ' "${(o)ZCOMET_TRIGGERS[@]}"
-	read -z && print "${REPLY%,}" | fold -s -w $COLUMNS
-(( ${#ZCOMET_CACHE} )) &&
-  success=1 &&
-  print -P '%B%F{yellow}Cached:%f%b' &&
-	print -n '  '
-	print -z -f '%s, ' "${(o)ZCOMET_CACHE[@]}"
 	read -z && print "${REPLY%,}" | fold -s -w $COLUMNS
 
 (( success )) && return 0 || return 1

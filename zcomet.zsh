@@ -525,57 +525,101 @@ _zcomet_snippet_command() {
 _zcomet_eval() {
   [[ -z $1 ]] && print 'You need to specify a command.' && return 1
 
-  local eval_cmd eval_file _eval_base eval_base eval_lock i
+  local eval_cmd eval_file _eval_base eval_base i did_wait=false eval_lock eval_b
 
   eval_cmd=$1 && shift
   ! [ -d ${ZCOMET[CACHE_DIR]} ] && mkdir -p ${ZCOMET[CACHE_DIR]}
-  _eval_base=${ZCOMET[CACHE_DIR]}/${ZCOMET[EVAL_FILE]}
-  eval_base=$_eval_base.
+  eval_lock=${ZCOMET[CACHE_DIR]}/${ZCOMET[EVAL_FILE]}
+  eval_base=$eval_lock.
+  eval_b=${eval_lock}_b
   ZCOMET[EVAL_FILE]+="_"
 
   eval_file=($eval_base*([1]N))
-  if [[ -z "$eval_file" ]]; then
-    if [ -e "$_eval_base" ]; then
-      # wait up to 1 sec to finish eval
-      for ((i=1; i<=100; i++)); do
-        [[ -e $eval_base ]] &&
-        source $eval_base &&
-        _zcomet_add_list "cache" "$eval_cmd" &&
-        return
+  if [[ -z $eval_file || -e $eval_b ]]; then
 
-        sleep 0.01
+    if ! function { setopt localoptions noclobber; eval $eval_cmd >$eval_lock; } 2>/dev/null; then
+      # wait up to 1 sec to finish eval
+      for ((i=1; i<=20; i++)); do
+        if [[ ! -e $eval_lock ]]; then
+
+          if  [[ -e $eval_b ]]; then
+            source $eval_b
+            return 2
+          elif [[ -e $eval_base ]]; then
+            did_wait=true
+            break
+          fi
+
+        fi
+
+        sleep 0.05
       done
+      if ! $did_wait; then
+        print -- "zcomet: warn: sourcing manually after failing to await for eval cache at '$eval_base'. If the issue persists, please check your system."
+        rm -rf $eval_lock
+        eval "$(eval $eval_cmd)"
+        return
+      fi
     fi
-    eval $eval_cmd >$_eval_base
-    mv $_eval_base $eval_base
+
+    if [[ -e $eval_b ]]; then
+      if $did_wait && [[ -n "$(source $eval_base 2>&1)" ]] || [[ -n "$(source $eval_lock 2>&1)" ]]; then
+        $did_wait || mv $eval_lock $eval_base
+        # keep restoring from backup since source was not fixed.
+        source $eval_b
+        print -- "zcomet: error: restored cache from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
+        return 2
+      else
+        rm $eval_b
+      fi
+    fi
+
+    # After eval_lock succeed/fail without backup, move to where it can be discovered ($eval_base)
+    $did_wait || mv $eval_lock $eval_base # we expect $did_wait <=> ! [[ -e $eval_lock ]]
     eval_file=$eval_base
   fi
-  source $eval_file 
-  
-  if mkdir "${_eval_base}lock" 2>/dev/null; then    
+  source $eval_file && _zcomet_add_list "cache" "$eval_cmd"
+
+  if function { setopt localoptions noclobber; : > $eval_lock; } 2>/dev/null || [[ -n $eval_lock(#qN.cs+60) ]]; then
     (
       # compute "hash"
       if [[ -n $1 ]]; then
-        new_suffix=$(eval $1) # custom suffix
+        new_suffix="$(eval $1)" # custom suffix
       else
         cat_files=${eval_cmd##cat }
         if [[ $eval_cmd != $cat_files ]]; then
-          new_suffix=$(zstat +mtime ${=~cat_files} | cut -d' ' -f 2 | sort -nr | head -n 1) # update by mtime by default for cat
+          zmodload zsh/stat
+          new_suffix="$(zstat +mtime ${=~cat_files} | cut -d' ' -f 2 | sort -nr | head -n 1)" # update by mtime by default for cat
         else
-          new_suffix=$(cksum $eval_file | cut -d' ' -f1) # numeric hash of full command
+          new_suffix="$(cksum $eval_file | cut -d' ' -f1)" # numeric hash of full command
         fi
+      fi
+      if [[ -z $new_suffix ]]; then
+        print -- "zcomet: error: could not compute cache key. Please check your command for $eval_file."
+        return 1
       fi
 
       # update if hash differs
-      suffix="${eval_file##*.}"
-      if [[ $suffix != $new_suffix ]]; then
-          rm -f $eval_base* # we don't need to worry about files that are still reading due to inodes
-          eval $eval_cmd >$_eval_base
-          mv $_eval_base $eval_base$new_suffix
-          zcompile $eval_base$new_suffix
+      suffix=${eval_file##*.}
+      if [[ ! -e $eval_file ]]; then
+        # unexpected
+        eval $eval_cmd >$eval_base$new_suffix 2>/dev/null
+      elif [[ $suffix != $new_suffix ]]; then
+          eval $eval_cmd >| $eval_lock 2>/dev/null
+          mv $eval_file $eval_b
+          rm -f $eval_base*(N) # we don't need to worry about files that are still reading due to inodes
+          if [[ -n "$(source $eval_lock 2>&1)" ]]; then
+            print -- "zcomet: error: restored cache from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
+          else
+            mv $eval_lock $eval_base$new_suffix
+            rm $eval_b
+            zcompile $eval_base$new_suffix &>/dev/null
+            return
+          fi
       fi
-      rmdir ${_eval_base}lock
-    )&>/dev/null &! 
+
+      rm $eval_lock
+    ) &!
   fi
 
   _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
@@ -743,7 +787,7 @@ zcomet() {
     compinit)
       autoload -Uz compinit
 
-      if [[ $TERM != 'dumb' ]]; then 
+      if [[ $TERM != 'dumb' ]]; then
         check_interval=$1
         () {
           setopt LOCAL_OPTIONS EQUALS EXTENDED_GLOB
