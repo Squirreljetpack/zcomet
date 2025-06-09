@@ -525,7 +525,7 @@ _zcomet_snippet_command() {
 _zcomet_eval() {
   [[ -z $1 ]] && print 'You need to specify a command.' && return 1
 
-  local eval_cmd eval_file _eval_base eval_base eval_lock i
+  local eval_cmd eval_file _eval_base eval_base eval_lock i did_wait=false
 
   eval_cmd=$1 && shift
   ! [ -d ${ZCOMET[CACHE_DIR]} ] && mkdir -p ${ZCOMET[CACHE_DIR]}
@@ -534,7 +534,7 @@ _zcomet_eval() {
   ZCOMET[EVAL_FILE]+="_"
 
   eval_file=($eval_base*([1]N))
-  if [[ -z "$eval_file" ]]; then
+  if [[ -z "$eval_file" || -e "$_eval_base"_bk ]]; then
     if [ -e "$_eval_base" ]; then
       # wait up to 1 sec to finish eval
       for ((i=1; i<=100; i++)); do
@@ -545,10 +545,26 @@ _zcomet_eval() {
 
         sleep 0.01
       done
+      did_wait=true
+    fi
+    if $did_wait; then
+      if [[ -e "$_eval_base"_bk ]]; then
+        source "$_eval_base"_bk
+        return 2
+      else
+        rm $_eval_base # close inode
+      fi
     fi
     eval $eval_cmd >$_eval_base
-    mv $_eval_base $eval_base
-    eval_file=$eval_base
+
+    if [[ -e "$_eval_base"_bk && -n "$(source $_eval_base 2>&1)" ]]; then
+      rm $_eval_base
+      eval_file="$_eval_base"_bk
+      print -- "zcomet: Output was produced by an updated eval command, restored cache from $eval_file. Please check $_eval_base (i.e. source $_eval_base) and your config for errors before the next invocation."
+    else
+      mv $_eval_base $eval_base
+      eval_file=$eval_base
+    fi
   fi
   source $eval_file 
   
@@ -569,13 +585,20 @@ _zcomet_eval() {
       # update if hash differs
       suffix="${eval_file##*.}"
       if [[ $suffix != $new_suffix ]]; then
-          rm -f $eval_base* # we don't need to worry about files that are still reading due to inodes
-          eval $eval_cmd >$_eval_base
-          mv $_eval_base $eval_base$new_suffix
-          zcompile $eval_base$new_suffix
+          eval $eval_cmd >$_eval_base &>/dev/null
+          mv $eval_file "$_eval_base"_bk
+          rm -f $eval_base*(N) # we don't need to worry about files that are still reading due to inodes
+          if [[ -n "$(source $_eval_base 2>&1)" ]]; then
+            mv ${_eval_base}_bk $eval_file
+            print -- "zcomet: Output was produced by an updated eval command, previous cache restored to $eval_file. Please check your $_eval_base and your config for errors before the next invocation."
+          else
+            mv $_eval_base $eval_base$new_suffix
+            zcompile $eval_base$new_suffix &>/dev/null
+            rm ${_eval_base}_bk
+          fi
       fi
       rmdir ${_eval_base}lock
-    )&>/dev/null &! 
+    ) &! 
   fi
 
   _zcomet_add_list "cache" "$eval_cmd" # the idea is that other caching operations may also be represented similary
