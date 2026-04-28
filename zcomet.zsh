@@ -537,23 +537,27 @@ _zcomet_eval() {
   eval_file=($eval_base*([1]N))
   if [[ -z $eval_file || -e $eval_b ]]; then
 
+    # try recompute into eval_lock without racing
+    # wait up to 1 sec if in progress
     if ! function { setopt localoptions noclobber; eval $eval_cmd >$eval_lock; } 2>/dev/null; then
-      # wait up to 1 sec to finish eval
       for ((i=1; i<=20; i++)); do
         if [[ ! -e $eval_lock ]]; then
 
           if  [[ -e $eval_b ]]; then
             source $eval_b
             return 2
-          elif [[ -e $eval_base ]]; then
-            did_wait=true
-            break
+          else
+            eval_file=($eval_base*([1]N))
+            if [[ -n $eval_file ]]; then
+              did_wait=true
+              break
+            fi
           fi
-
         fi
 
         sleep 0.05
       done
+      # timed out meaning other failed, we don't want to save anything as the error is unknown
       if ! $did_wait; then
         print -- "zcomet: warn: sourcing manually after failing to await for eval cache at '$eval_base'. If the issue persists, please check your system."
         rm -rf $eval_lock
@@ -562,21 +566,33 @@ _zcomet_eval() {
       fi
     fi
 
-    if [[ -e $eval_b ]]; then
-      if $did_wait && [[ -n "$(source $eval_base 2>&1)" ]] || [[ -n "$(source $eval_lock 2>&1)" ]]; then
-        $did_wait || mv $eval_lock $eval_base
-        # keep restoring from backup since source was not fixed.
+    # if the backup exists and we waited, it was created in the interim, use the backup. If we didn't wait, continue to use backup.
+    if ! $did_wait; then
+      # we are the producer
+      if [[ -n "$(source $eval_lock 2>&1)" ]]; then
+        if [[ ! -e $eval_b ]]; then
+          if [[ -n $eval_file ]] && [[ -z "$(source $eval_file 2>&1)" ]]; then
+            mv "$eval_file" "$eval_b"
+          else
+            print -- "zcomet: error: '$eval_cmd' produced output without any backup for fallback."
+            return 2
+          fi
+        fi
+        print -- "zcomet: warn: sourcing from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
         source $eval_b
-        print -- "zcomet: error: restored cache from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
         return 2
       else
-        rm $eval_b
+        # success
+        mv $eval_lock $eval_base # note that !did_wait <=> -e eval_lock here
+        eval_file=$eval_base
       fi
+    elif [[ -e $eval_b ]]; then
+      print -- "zcomet: warn: sourcing from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
+      source $eval_b
+      return 2
+    else
+      # we waited, it's possible eval_file disappeared in the interim but sourcing without arguments is not dangerous and its not worth it to add retry logic
     fi
-
-    # After eval_lock succeed/fail without backup, move to where it can be discovered ($eval_base)
-    $did_wait || mv $eval_lock $eval_base # we expect $did_wait <=> ! [[ -e $eval_lock ]]
-    eval_file=$eval_base
   fi
   source $eval_file && _zcomet_add_list "cache" "$eval_cmd"
 
@@ -607,18 +623,20 @@ _zcomet_eval() {
       elif [[ $suffix != $new_suffix ]]; then
           eval $eval_cmd >| $eval_lock 2>/dev/null
           mv $eval_file $eval_b
-          rm -f $eval_base*(N) # we don't need to worry about files that are still reading due to inodes
           if [[ -n "$(source $eval_lock 2>&1)" ]]; then
             print -- "zcomet: error: restored cache from '$eval_b' after output was produced by an updated eval command. Please check your command and config for errors before the next invocation (i.e. by running `source '$eval_base'`)."
+            # clear all related files except backup
+            rm -f $eval_base*(N) # we don't need to worry about files that are still reading due to inodes
           else
             mv $eval_lock $eval_base$new_suffix
-            rm $eval_b
+            rm -f $eval_base^$new_suffix(N)
+            rm -f $eval_b
             zcompile $eval_base$new_suffix &>/dev/null
             return
           fi
       fi
 
-      rm $eval_lock
+      rm $eval_lock 2>/dev/null
     ) &!
   fi
 
